@@ -6,7 +6,7 @@
 ## 项目结构
 
 - `daily_run.py`：单次执行入口
-- `config/default_config.json`：关键词、来源、打分、发送配置
+- `config.demo/default_config.json`：公开示例配置模板
 - `src/daily_paper/collectors`：数据源抓取（Europe PMC / Crossref）
 - `src/daily_paper/ranker`：评分与Top1选择
 - `src/daily_paper/dedup`：已发送 DOI 去重
@@ -18,7 +18,8 @@
 
 - Python 3.10+
 - 可访问 `Europe PMC` 与 `Crossref` API
-- 建议在 `config/default_config.json` 填写 `smtp` 与 `llm` 参数
+- 首次使用时，将 `config.demo/default_config.json` 复制为 `config/default_config.json`
+- 在本地 `config/default_config.json` 中填写 `smtp` 与 `llm` 参数
 - 也支持 `.env` 覆盖（可参考 `.env.example`）
 
 ## 快速开始
@@ -29,6 +30,7 @@
 - 你只需要执行命令，不用每次 `export`
 
 ```bash
+cp config.demo/default_config.json config/default_config.json
 python3 daily_run.py --dry-run
 python3 daily_run.py
 ```
@@ -42,7 +44,8 @@ python3 daily_run.py --dry-run
 3. OpenRouter（默认）：
 
 ```bash
-# 在 config/default_config.json 中设置
+# 先复制 config.demo/default_config.json 到 config/default_config.json
+# 再在 config/default_config.json 中设置
 # llm.provider = "openrouter"
 # llm.model = "openai/gpt-5.2"
 # llm.api_key = "你的OPENROUTER_API_KEY"
@@ -73,4 +76,3 @@ python3 daily_run.py --dry-run
 - LLM 参数：`llm.provider / llm.api_key / llm.model / llm.base_url`
 - 全文硬过滤与研究类型过滤：`content.require_full_text / content.include_any / content.exclude_any`
 - Figure 最大提取数量：`interpretation.max_figures`
-
