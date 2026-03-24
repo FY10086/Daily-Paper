@@ -1,0 +1,386 @@
+Daily Paper CLI 需求基线（MVP）
+
+参考项目：https://github.com/Passpoor/Papfast
+
+目标：
+每天自动筛选 1 篇与生物信息分析/测序/数据库相关的高水平论文，生成结构化解读，并通过邮箱发送。
+
+MVP 规则冻结：
+1) 期刊范围
+- 优先：Cell / Nature / Science 主刊与核心子刊
+- 仅保留白名单高质量期刊（见 config/default_config.json -> journals.whitelist）
+
+2) 频率与发送
+- 每天 1 封邮件，正文包含 1 篇论文 + 解读
+- 默认测试收件人：760311932@qq.com
+
+3) 论文主题
+- 主题聚焦：生物信息分析、测序技术、数据库相关
+- 采用中英关键词匹配 + 同义词扩展（见 config/default_config.json -> topic_keywords）
+
+4) 时间与优先级
+- 默认检索窗口：近 30 天
+- 若窗口内无候选，允许回溯至 180 天
+- 评分优先级：主题相关性 > 期刊权重 > 新近度 > 引用数
+
+5) 防重复
+- 使用 data/sent_papers.txt 记录已发送 DOI
+- 同一 DOI 不重复发送
+
+6) 邮件解读格式（MVP）
+- 三段：背景、方法、意义
+- 三条要点：用于快速浏览
+- 优先使用摘要内容生成，不依赖外部 LLM
+
+第一次优化：
+有几个需要修正的点 1 你给我发送的文章不是我指定杂志的，是中南大学学报，你可以考虑去那个杂志的官网寻找  2 我希望你能把这篇文章以pdf的形式一起发送给我 3 关于文章解读太简单了，我希望你能以文章中的图片为顺序把整个文章组织起来
+
+第二次优化：
+1 我希望你可以把一些重要的参数拿出来到config中我可以在外面调整，包括1 用户邮箱和SMTP码，这里我要向多个邮箱发送 2 杂志选择范围即杂志名称 3 拟检索内容的关键词 4 提供的api（这里默认使用openrouter） 以及你觉得必要的参数
+2 我试了下邮箱中没有发送pdf
+3 邮箱发送内容中我还需要增加文章信息，这个文章是哪个单位发表的，发表在什么杂志上
+4 出现了一个问题，每次都读取不到图片，我要更换api，用openrouter网站的，这次使用gpt5.2模型
+参考：import requests
+import json
+
+response = requests.post(
+  url="https://openrouter.ai/api/v1/chat/completions",
+  headers={
+    "Authorization": "Bearer <OPENROUTER_API_KEY>",
+    "HTTP-Referer": "<YOUR_SITE_URL>", # Optional. Site URL for rankings on openrouter.ai.
+    "X-OpenRouter-Title": "<YOUR_SITE_NAME>", # Optional. Site title for rankings on openrouter.ai.
+  },
+  data=json.dumps({
+    "model": "openai/gpt-5.2", # Optional
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is the meaning of life?"
+      }
+    ]
+  })
+)
+
+第三次优化：
+1 我希望文章内容是以具体的测序研究以及后续的分析，不需要综述，R包开发为主的文章，另外你根据我的要求收缩杂志范围
+2 我不需要下载pdf了，相关代码可以删除
+3 我需要你在爬文章时具体打开全文，在我的demo中结果如下
+## 论文标题 
+**Transcript-guided targeted cell enrichment for scalable single-nucleus RNA sequencing**
+
+## DOI 
+**10.1016/j.xgen.2025.101101**
+
+## 发表期刊 
+**Cell Genomics**
+
+## 作者单位 
+**未提供（题目信息中未包含作者与单位）**
+
+## 发表时间 
+**2026-03-01**
+
+## 背景（基于题目可合理概括，不引入未给出的实验细节） 
+单核RNA测序（single-nucleus RNA-seq, snRNA-seq）常用于难以获得完整细胞或需要处理复杂/冷冻组织的场景。题目指出该工作关注两个方向： 
+1) **Transcript-guided（转录本引导）**：意味着以RNA/转录本信号作为“导航”，指导后续步骤； 
+2) **targeted cell enrichment（靶向细胞富集）**与**scalable（可规模化）**：暗示作者试图在snRNA-seq流程中加入面向特定细胞群的富集策略，以提高目标细胞的比例并支持更大规模的实验或样本处理。
+
+> 说明：由于未提供摘要与方法细节，无法进一步具体到疾病/组织/细胞类型或现有方法瓶颈的量化描述。
+
+## 方法（仅依据标题信息进行结构化推断，避免编造实验流程细节） 
+从标题可提炼的核心方法框架为： 
+- **转录本引导（Transcript-guided）**：以转录本层面的信息作为靶向依据（例如用于识别或筛选目标细胞/细胞核的分子特征）。 
+- **靶向细胞富集（Targeted cell enrichment）**：在进入snRNA-seq建库/测序前，对目标细胞群（或细胞核群）进行富集，提高其在最终测序数据中的占比。 
+- **可扩展（Scalable）**：该富集与snRNA-seq流程被设计为适用于更大规模的样本数量、细胞核数量或更高通量的实验设置。
+
+> 重要限制：未提供摘要、实验设计、对照组、富集手段（如分选/捕获方式）、适用组织类型、性能评估指标等信息，因此不能描述更具体的操作步骤与结果表现。
+
+## 意义（基于标题进行高层次归纳，不引入数据结论） 
+- 若能以“转录本信号”指导“靶向富集”，则可能在snRNA-seq中更高效地获取稀有或关注的细胞群，从而提升研究的针对性与资源利用效率。 
+- “可规模化”指向潜在的高通量应用前景，可能有助于在多样本、多条件或大队列研究中更稳定地获得目标细胞核数据。
+
+## 三条要点（仅基于题目与元信息） 
+1) **核心思路**：用转录本信息作为指导信号，实施面向目标细胞的富集，再进行snRNA-seq。 
+2) **目标问题**：在单核RNA测序中实现对特定细胞群的“靶向获得”，并支持规模化应用。 
+3) **潜在价值**：有望提升目标细胞群在数据中的代表性，增强下游分析对特定细胞类型/状态的解析能力（具体表现需以论文正文为准）。
+
+## 按图解读 
+**未提取到图片信息**，因此无法对Figure进行逐图解读与总结。 
+若你能提供论文中的Figure截图或图注（Figure legends），我可以按图逐一解读：每张图的设计目的、关键比较、读图要点与可能的结论边界（严格基于图中信息）。
+
+我认为这是不合理的，不会找不到作者单位，并且还说“未提供摘要、实验设计、对照组、富集手段（如分选/捕获方式）、适用组织类型、性能评估指标等信息，因此不能描述更具体的操作步骤与结果表现。”，所以我怀并没有打开全文的链接，而是只停留在摘要的地方
+
+第四次优化：
+1 我希望再展示作者单位的时候只展示第一作者和最后一位通讯作者的
+2 给我一个方案，自动的每天上午10点定点发送一篇
+
+第五次优化：
+1 第一作者和通讯作者单位没有解析出来，这是不合理的看看咋回事
+2  以下是邮件内容，缺乏可读性，有大量的*号，重新做个更好阅读的排版
+3 下面的图解我只需要正文中的图就可以了，所有的补充图和extended figure都不需要
+4 文献解读的结果按照目的背景，方法，结果，意义四个角度总结
+
+
+## 论文标题
+**Genetics and environment distinctively shape the human immune cell epigenome**
+
+## DOI
+**10.1038/s41588-025-02479-6** 
+链接：https://doi.org/10.1038/s41588-025-02479-6
+
+## 发表期刊
+**Nature Genetics**
+
+## 作者单位
+- 第一作者单位：**未提供**
+- 通讯作者单位（末位作者）：**未提供**
+
+## 发表时间
+**2026-01-27**
+
+---
+
+## 背景
+人类免疫细胞的表观基因组（如 DNA 甲基化与染色质可及性）同时受到**遗传因素**与**环境暴露**（病原体、化学暴露等）的影响，但两类因素各自的贡献与其作用位点特征仍未被系统刻画。该研究旨在用单核尺度的多组学数据，系统关联不同暴露与遗传变异对免疫细胞表观基因组的影响，并探索其与疾病遗传信号的关系。
+
+---
+
+## 方法（基于所给摘要、Methods片段与图注信息整理）
+### 1) 样本与暴露设计（来自 Fig. 1 图注）
+- 针对 **HIV-1** 与 **IAV（流感）**：存在**同一供体感染前（pre）与暴露/感染后**的内部对照设计。
+- 另收集 **12 名健康供体 PBMC** 作为外部对照。
+- 对于 **无内部对照**的暴露（COVID、炭疽疫苗、MRSA/MSSA、OP）：使用所有健康样本作为对照。
+- 研究对象为血液 PBMC，并开展 **snmC-seq2（单核甲基化测序）** 与 **snATAC-seq（单核染色质可及性测序）**。
+
+### 2) 免疫细胞分选（来自 Methods：FACS）
+- 采用抗体标记后 FACS 分选至 384 孔板，鉴定并分选多种血液免疫细胞类型（图注提到“七种不同免疫细胞类型”，但方法段同时列出了“other cells”这一类）：
+  - 初始辅助 T（CD3+, CD4+, CCR7+, CD45RA+）
+  - 记忆辅助 T（CD3+, CD4+, CD45RA−）
+  - 初始细胞毒 T（CD3+, CD8+, CCR7+, CD45RA+）
+  - 记忆细胞毒 T（CD3+, CD8+, CD45RA−）
+  - B 细胞（CD3−, CD19+）
+  - 单核细胞（CD3−, CD19−, CD14+）
+  - NK 细胞（CD3−, CD19−, CD14−, CD16+, CD56+）
+  - 其他细胞（CD3−, CD19−, CD14−, CD16−, CD56−）
+- 分选平台：SONY Multi-Application Cell Sorter LE-MA900 Series；分选后进行蛋白酶处理与热循环步骤，并保存用于建库。
+
+### 3) snmC-seq2 建库与测序（来自 Methods）
+- 参考既有 snmC-seq2 方法进行亚硫酸氢盐转化与建库（refs. 14, 37）。
+- 测序平台：Illumina NovaSeq 6000（S4 flow cell，150 bp 双端）。
+- 自动化与测序控制软件：Freedom EVOware、Illumina MiSeq / NovaSeq 控制软件及 RTA。
+
+### 4) snATAC-seq（来自 Methods）
+- 使用 10x Genomics Chromium 单细胞 ATAC 试剂盒（不同版本与芯片在文中给出）。
+- NovaSeq 6000 测序；读长结构为 **50 × 8 × 16 × 49 bp**。
+- 目标测序深度：**平均 25,000 reads/核**（该数字来自方法段）。
+
+### 5) 数据处理、整合与统计分析（来自 Methods片段与图注）
+- 单细胞甲基化比对与 QC：使用实验室内部管线 **YAP**（链接在方法段中给出）。
+- 细胞嵌入与批次/供体整合：图注多处提及 **Harmony integration**。
+- 细胞聚类：Fig. 2 提及 **Leiden clusters**。
+- 功能注释：Fig. 2e/h 提及 **GO 富集分析**（包括超几何检验与 Benjamini–Hochberg FDR 校正，Metascape 实现）。
+- 暴露相关差异甲基化区域：**eDMRs**；基因型相关差异甲基化区域：**gDMRs**（摘要与 Fig. 1/3 图注）。
+- 模体富集：Fig. 3i 提及 **HOMER**（单侧累积超几何检验）。
+- 染色质与甲基化联合：Extended Data Fig. 7 提及联合嵌入与全基因组相关性（5 kb bins）。
+
+---
+
+## 意义（基于摘要，不扩展外推）
+- 研究在免疫细胞中同时刻画 **环境暴露**与**遗传变异**对表观基因组的关联，识别了暴露相关的 **eDMRs** 与染色质可及性差异区域，并观察到两种模态变化之间存在显著相关。
+- 结果指出：**eDMRs 更富集于调控区域**，而 **gDMRs 更倾向于位于基因体相关标记区域**，提示环境与遗传在表观层面的“着力点”不同。
+- 疾病相关 SNP 常与 **methylation QTL（mQTL）**共定位，为理解疾病遗传基础提供了**细胞类型特异**的线索。
+
+---
+
+## 三条要点
+1. 通过 snmC-seq2 与 snATAC-seq，在 PBMC 多免疫细胞类型中系统关联多种病原体/化学暴露与遗传变异对表观基因组的影响，得到暴露相关 eDMRs 与可及性差异区域，并发现两者变化相关。 
+2. eDMRs 与 gDMRs 呈现不同的基因组定位偏好：摘要指出 eDMRs 富集于调控区域，而 gDMRs 更偏向基因体相关标记区域。 
+3. 疾病相关 SNP 与 mQTL 的共定位为“哪些细胞类型中哪些遗传位点通过甲基化影响调控”提供了线索，从而推进对免疫细胞调控与疾病机制的理解。
+
+---
+
+## 按图解读（仅基于所给 Figure 信息）
+### Figure 1（Fig. 1: Overview of the study）
+- 概述研究设计： 
+  - HIV-1 与 IAV 使用同供体“暴露前/后”的内部对照；另有 12 名健康供体作为外部对照。 
+  - 对无内部对照的暴露（COVID、炭疽疫苗、MRSA/MSSA、OP）使用健康样本作对照。 
+- 实验流程：PBMC 上做 snATAC-seq 与 snmC-seq2，并据此识别暴露相关 eDMRs、基因型相关 gDMRs。
+
+### Figure 2（Extended Data Fig. 1: FACS gating process and plate pooling strategy）
+- 展示 FACS gating 的示例流程与统计，并说明在每个样本中将不同细胞类型分选到同一板（plate）中，便于后续实验与整合分析。
+
+### Figure 3（Extended Data Fig. 2: QC of snmC-seq2 data and merged pseudobulk）
+- 质量控制与覆盖度评估： 
+  - 单细胞/合并样本的基因组覆盖分布、CpG 覆盖分布； 
+  - 以热图展示各样本或各暴露条件合并后的 CpG 位点测序深度分布。 
+- 目的：证明 snmC-seq2 数据在样本与条件层面具备可用于比较分析的覆盖与深度特征（不在此处引申具体好坏阈值）。
+
+### Figure 4（Extended Data Fig. 3: Within-cell-type t-SNE）
+- 在每个分选细胞类型内部进行 Harmony 整合后的 t-SNE，可视化不同暴露来源细胞在同一细胞类型中的分布；并用“某一暴露高亮”为红色的方式展示其相对位置，辅助判断暴露相关的细胞状态变化是否在嵌入空间中可分。
+
+### Figure 5（Fig. 2: Within-cell-type changes are associated with each exposure）
+- (a) 各细胞类型内基于 snmC-seq2 的 UMAP，并按暴露分组上色（含 HIV pre/after、IAV pre/after、COVID 严重/非严重等标注）。 
+- (b) 各组在 Leiden 聚类中的细胞比例构成（按 FACS 细胞类型着色），用于呈现“同一细胞类型内部的亚群比例变化”。 
+- (c) HIV 与 IAV 在感染前后，各 Leiden cluster 的细胞比例变化散点图，用于比较两种感染暴露的群体结构改变。 
+- (d)(e) 针对 HIV 暴露供体，在变化最明显的细胞类型（图注列出 NK、Tc-mem、Tc-naive）展示不同阶段（pre/acu/cro）在 UMAP 中的分布；并用 Fisher 精确检验给出各阶段在 cluster 上的富集（odds ratio），同时对对应 cluster 的差异甲基化基因（DMGs）做 GO 富集。 
+- (f)(g)(h) COVID 样本中鉴定出两类单核细胞 cluster： 
+  - (f) 给出对照、重症、非重症中两类单核细胞比例对比，并用卡方检验；图注提供一个极显著的 P 值（P = 1.32 × 10^−278）。 
+  - (g) 比较两类 cluster 在经典/非经典单核细胞标记基因上的基因体甲基化水平。 
+  - (h) 两类单核细胞 cluster 的 DMGs 的 GO 富集分析。
+
+### Figure 6（Extended Data Fig. 4: Within-cell-type methylation difference between sub-clusters）
+- (a) HIV 暴露在各 FACS 细胞类型内部的 UMAP，并用每个细胞的全局甲基化水平着色，辅助观察亚群间甲基化差异。 
+- (b) COVID 样本两类单核细胞 cluster 的 DMGs 甲基化水平差异展示（与 Fig. 2 的单核细胞亚群分析呼应）。
+
+### Figure 7（Fig. 3: Identification of eDMRs and their features）
+- (a)(b) 基于单核甲基化谱对所有暴露的细胞进行 UMAP：分别按全局甲基化水平或按 FACS 细胞类型着色，展示整体结构。 
+- (c) 各暴露、各细胞类型的 eDMR 数量统计，并区分暴露相对对照的低甲基化（Hypo）与高甲基化（Hyper）eDMRs。 
+- (d)-(g) 针对 MRSA/MSSA 与 COVID-19 的“族群/遗传祖源相关（ethnicity-dependent）eDMRs”，用 PCA 与 Venn 图展示不同祖源个体间的重叠情况（图注提及 African 与 European genetic ancestry）。 
+- (h) COVID、HIV、MSSA 的 hypo-eDMRs 与组蛋白修饰峰的富集分析（点图展示富集/缺失方向）。 
+- (i) 使用 HOMER 对各暴露、各细胞类型的 eDMRs 做 motif 富集（点大小表示富集 P 值，颜色标记细胞类型）。
+
+### Figure 8（Extended Data Fig. 5: QC of eDMR calling）
+- 展示 eDMR 识别过程的质量控制： 
+  - Harmony 整合前后 UMAP 对比（按暴露或细胞类型上色）； 
+  - label-shuffling 后 eDMR/DMR 调用的 p 值分布，用于评估假阳性背景； 
+  - 单 CpG eDMR 比例、以及各暴露条件下 eDMR 效应大小分布等，用于检验 eDMR 调用的稳定性与合理性。
+
+### Figure 9（Extended Data Fig. 6: Features of eDMRs）
+- (a) BA（炭疽疫苗/相关暴露）、流感病毒、OP 的 hypo-eDMRs 与组蛋白修饰峰富集。 
+- (b) eDMRs 的基因组功能元件富集（按细胞类型与暴露分层）。 
+- (c) hypo-eDMRs 的 motif 富集（按细胞类型与暴露）。 
+- (d) COVID-19 与 MRSA/MSSA 中，各细胞类型 eDMRs 与相应细胞类型转录因子 ChIP-seq 峰的富集关系。 
+- (e)-(h) HIV-1 或 COVID-19 的 eDMRs 与差异表达基因（DEGs）的邻近关系比较（与随机基因或随机 CpG 位点对照），用于评估 eDMRs 与转录改变之间的关联线索（不在此处推断因果）。
+
+### Figure 10（Extended Data Fig. 7: Integration of snATAC-seq and snmC-seq2）
+- (a)(b) snATAC-seq 与 snmC-seq2 的联合嵌入：展示 Harmony 整合前后的联合 UMAP。 
+- (c) 在全基因组尺度以 5 kb bin 计算 DNA 甲基化与染色质可及性的相关性（用于支持两模态的耦合关系）。 
+- (d)-(g) 在炭疽疫苗暴露、OP 暴露、SARS-CoV-2 暴露、IAV 暴露中，以热图展示 DNA 甲基化与染色质可及性变化的对应关系，强调两种表观层变化在暴露响应中存在一致性/相关性模式。
+
+第六次优化：
+可读性已经大大提升了，但是还有些细节做的不好，主要是在标题那里，让我感觉像是提示词没删除干净，我把邮件内容放在下面了看一下，包括但不限于
+1 — 论文英文标题 改成 论文标题；
+2 Atf3 控制雌性线粒体心肌病的“过渡/转变”过程：空间转录组与单细胞转录组联合鉴定 — Atf3 controls transitioning in female mitochondrial cardiomyopathy as identified by spatial and single-cell transcriptomics.
+这里改成先给英文标题名字然后再下一行再给翻译后的中文名字；
+3 基本信息 — DOI、期刊、发表时间、第一作者单位、通讯作者单位各占一行 改成基本信息 — DOI、期刊、发表时间与工作单位
+4 目的与背景 — 研究动机、领域现状与本文要解决的核心问题（3~5句） 改成目的与背景 — 研究动机、领域现状与本文要解决的核心问题
+5 方法 — 关键技术路线、实验设计、数据集，可用小节或列表展开 改成 方法 — 关键技术路线与实验设计
+6 结果 — 主要发现与量化结论，严格基于摘要/全文，不外推 改成 结果 — 主要发现与结论
+7 意义 — 科学价值、潜在应用、局限性（如有） 改成 意义 — 科学价值、潜在应用与局限性
+8 三条要点 — 三条带序号的一句话摘要，供快速浏览 改成 三条要点 — 三句话让你读懂本篇论文
+9 按图解读 — 按 Figure 编号逐图说明，若无图注则说明无法展开 改成 主要图解
+
+— 论文英文标题
+Atf3 控制雌性线粒体心肌病的“过渡/转变”过程：空间转录组与单细胞转录组联合鉴定 — Atf3 controls transitioning in female mitochondrial cardiomyopathy as identified by spatial and single-cell transcriptomics.
+基本信息 — DOI、期刊、发表时间、第一作者单位、通讯作者单位各占一行
+DOI：10.1126/sciadv.adq1575
+期刊：Science Advances
+发表时间：2025-04-04
+第一作者单位：Department of Molecular Pharmacology, National Cerebral and Cardiovascular Center, Suita, Osaka, Japan.
+通讯作者单位：Murdoch Children’s Research Institute, Royal Children’s Hospital, and University of Melbourne, Department of Paediatrics, Parkville, Victoria, Australia.
+目的与背景 — 研究动机、领域现状与本文要解决的核心问题（3~5句）
+氧化磷酸化（OXPHOS）缺陷可导致难治的线粒体疾病，并且心脏受累会显著影响预后，但从“代偿”走向“功能失代偿/衰竭”的机制仍不清楚。
+本文聚焦线粒体心肌病（MCM）中，心肌细胞如何在代谢缺陷压力下发生状态转变，以及这一转变是否存在关键调控因子。
+作者结合人类患者心肌组织的空间转录组与单核RNA测序（snRNA-seq），并使用小鼠心脏特异性 Ndufs6 敲低模型（FS6KD）进行验证。
+核心问题：在心肌细胞状态连续变化（trajectory/transition）过程中，是否存在“命运决定（fate-determining）”的转录因子，尤其在性别维度上是否具有特异性作用。
+方法 — 关键技术路线、实验设计、数据集，可用小节或列表展开
+多组学与单细胞/空间测序策略
+人体样本：对一名女性MCM患者的心脏组织进行
+- 空间分辨转录组（spatially resolved transcriptomics）
+
+- snRNA-seq（单核RNA测序）
+
+小鼠模型：构建并分析心脏特异性 Ndufs6 knockdown（FS6KD） 的MCM模型；并进行跨阶段比较（早/中/晚期）。
+关键计算分析
+无监督聚类（Leiden clusters）与 UMAP 可视化，用于细胞群体/心肌细胞亚群解析。
+Pseudotime/轨迹分析：使用 PAGA（partition-based graph abstraction）并以 ForceAtlas2 展示轨迹结构，用于刻画心肌细胞从代偿到严重受损的连续状态变化。
+差异表达与功能富集：热图展示 DEGs（按 log2FC 排序）及对应 GO terms；统计方法在图注中包含 Fisher exact test、Wilcoxon rank-sum test 等。
+动物实验与分期、遗传学验证
+Atf3 基因敲除：在 FS6KD 背景上用 CRISPR-Cas9 构建 Atf3−/−FS6KD（给出两条 gRNA 靶向 Atf3 exon 2 与 exon 4）。
+雌鼠分期（作者基于雌性FS6KD存在个体差异、Atf3诱导可能更早而定义）：
+- 早期：4–8 周
+
+- 中期：10–12 周
+
+- 晚期：17 周
+
+心功能检测：超声心动图（Vevo 3100），测量左心室 EF 等指标（方法段提到EF；图6还汇总EF与LVDd）。
+组织/分子验证：
+- 免疫染色（例如 Atf3 核定位；TnnI3 标记心肌细胞）
+
+- 免疫印迹（ISR 相关蛋白，如 eIF2α、p-eIF2α、Atf4、Mthfd2、Shmt2 等）
+
+- 组织学（H&E；Masson’s trichrome 评估纤维化）
+
+- RNA-seq（图6E：中期心脏整体转录组比较）
+
+结果 — 主要发现与量化结论，严格基于摘要/全文，不外推
+人体心脏的空间转录组与 snRNA-seq 显示：在代谢扰动背景下，心肌细胞（cardiomyocytes）相较其他细胞类型呈现“最异质（most heterogeneous）”的表达景观（摘要）。
+轨迹/拟时序分析揭示心肌细胞存在从代偿（compensation）走向严重受损（severe compromise）的动态细胞状态转变（摘要；图1O–T、图3A–E）。
+这一进程与转录因子 ATF3 的短暂上调（transient up-regulation）相一致（摘要；图1G、图1L、图3I、图4B–C）。
+在小鼠 FS6KD 模型中，作者解析了早期与晚期（以及后续加入中期）的细胞图谱，并在心肌细胞轨迹中观察到 Atf3 诱导与相关转录因子/基因模块变化（图2、图3）。
+遗传学因果验证：在 FS6KD 背景下敲除 Atf3 可延缓心肌病/心衰进展，且表现为雌性特异（female-specific manner）（摘要；图6标题与图6A–B）。
+机制关联线索：图5标题指出 ISR（integrated stress response）激活发生在“短暂 Atf3 诱导”之后；并通过 snRNA-seq 的基因表达与蛋白免疫印迹检测了 ISR 相关分子（图5D–F），在 Atf3 敲除背景下也检测 ISR 相关蛋白变化（图6F–G）。
+量化/样本量信息（来自图注，未提供具体数值）：
+- 人体空间转录组 spots：n = 488（图1E）
+
+- 人体 snRNA-seq 细胞核：n = 10,868；其中心肌细胞 n = 3,511（图1J–K）
+
+- 小鼠整合数据：FS6WT n = 12,020；early FS6KD n = 12,516；late FS6KD n = 7,280（图2B）
+
+- 小鼠心肌细胞：FS6WT n = 2,856；early FS6KD n = 4,273；late FS6KD n = 1,201（图2D）
+
+- 免疫染色 Atf3 阳性核统计：早/中/晚期分别 n = 5/3/3 生物学重复（图4C）
+
+- 超声心动图雌鼠：早期（n = 4, 11, 11），中期（n = 3, 9, 11）（图6A）；雄鼠也给出对应 n（图6B）
+
+意义 — 科学价值、潜在应用、局限性（如有）
+科学价值：将空间转录组 + snRNA-seq + 轨迹分析 + 遗传学敲除串联，提出并验证 ATF3 在雌性 MCM 进展中的关键调控作用，强调心肌细胞状态转变的动态过程可被转录程序捕捉。
+潜在应用：为理解线粒体疾病中心脏受累的进展机制提供候选靶点（ATF3/ISR 轴作为方向性线索），并提示需重视性别差异。
+局限性（基于所给信息可谨慎指出）：人体数据来自单个患者心脏样本（从图注可见为女性 9 个月患者），外推性需要更多个体与队列验证；此外 Atf3 的作用呈“雌性特异”，其原因需进一步机制阐明（本文提供了关联与遗传学证据，但此处不扩展推断）。
+三条要点 — 三条带序号的一句话摘要，供快速浏览
+空间转录组与 snRNA-seq显示 MCM 心肌细胞在代谢扰动下高度异质，并沿拟时序呈现从代偿到严重受损的状态转变。
+该转变过程伴随转录因子 ATF3 的短暂诱导上调，提示其参与关键过渡阶段的调控。
+在 FS6KD 小鼠中敲除 Atf3 能延缓雌性心肌病/心衰进展，支持 ATF3 的“命运决定”作用。
+按图解读 — 按 Figure 编号逐图说明，若无图注则说明无法展开
+Figure 1：患者心脏心肌细胞存在“转变（transitioning）”证据
+(A) 对呼吸链复合体相关蛋白（NDUFA9/SDHA/COX4）进行免疫组化评估。
+(B) 电镜显示异常线粒体超微结构（肿胀、同心层样膜）。
+(C–D) 左心室 H&E 显示三个表型异质区域：轻度/进展期/重度功能障碍区域。
+(E) 空间转录组 spots（n=488）无监督聚类映射到组织切片上。
+(F–I) 关键基因/因子在空间 spots 上的表达分布：NPPB、ATF3、ATF4、ATF5。
+(J) 患者 snRNA-seq（n=10,868）细胞群体 UMAP 与注释。
+(K–N) 提取心肌细胞（n=3,511）后再聚类，并展示 ATF3、PPARGC1A、NPPB 表达。
+(O–T) PAGA/ForceAtlas2 轨迹展示两条轨迹；热图与散点图用于呈现轨迹上的基因模块变化（包括 ATF3 与 PPARGC1A、NPPB 的对照展示）。
+Figure 2：FS6KD 小鼠模型显示更早期的心肌细胞代谢代偿特征
+(A–B) 整合数据的 UMAP：按细胞类型与样本阶段（FS6WT、early FS6KD、late FS6KD）着色。
+(C) 各细胞类型的 Ndufs6 敲低效率热图（early FS6KD vs FS6WT）。
+(D) 心肌细胞层面的差异基因与 GO 富集（并在 UMAP 中按样本身份展示）。
+(E–F) 心肌细胞进一步子聚类，并展示不同阶段在各子群的分布。
+(G–H) Ppargc1a 与 Nppb 在心肌细胞 UMAP 上的表达特征，并对 early FS6KD 中的小亚群进行放大强调。
+(I–J) 在整合数据中展示 Ppargc1a 在不同细胞类型/数据集中的表达与均值汇总。
+Figure 3：拟时序轨迹揭示转变过程中 Atf3 的诱导
+(A–B) 基于心肌细胞的 PAGA 轨迹图，分别按细胞状态与样本阶段着色。
+(C) early FS6KD 心肌细胞的轨迹细化展示。
+(D–E) 在轨迹上展示 Ppargc1a 与 Nppb 的表达变化。
+(F) early FS6KD 轨迹状态的上调基因热图与 GO 富集。
+(G–H) 从上调基因集中提取转录因子并排序，突出 Atf3 在其中的变化（图注给出统计检验：Wilcoxon 等）。
+(I) 在整合 UMAP 上展示 Atf3 表达增强，定位其主要出现的细胞群/阶段。
+Figure 4：Atf3 阳性心肌细胞形成特定簇，并伴随 OXPHOS 基因受抑
+(A) early FS6KD 中 Atf3 的核定位免疫染色（TnnI3 标记心肌细胞）。
+(B) 不同年龄/阶段 FS6WT 与 FS6KD 的 Atf3 免疫染色对比。
+(C) 不同阶段 Atf3 阳性细胞核的定量统计（给出 n 与显著性标注阈值）。
+(D) 展示 Atf3 表达高低的细胞核在局部区域内呈现“簇状”分布。
+(E) 基于 photo-isolation chemistry 提取区域后进行 DEGs 与 GO 分析（n=3 生物学重复/组）。
+(F) Ppargc1a 表达水平的柱状图比较（n=3 生物学重复/组；给出显著性阈值 *P ≤ 0.05）。
+Figure 5：ISR 激活发生在短暂 Atf3 诱导之后
+(A–B) 整合数据 UMAP：按细胞类型与样本阶段（early/middle/late FS6KD）展示。
+(C) 提取心肌细胞后按阶段展示，并给出 middle FS6KD 心肌细胞相关 GO 术语。
+(D) 热图展示 Atf 家族因子与 ISRmt 相关基因在差异基因列表中的表达变化。
+(E–F) 免疫印迹检测 ISR 相关蛋白/酶（eIF2α、p-eIF2α、Atf4、Mthfd2、Shmt2），并对部分指标进行定量（图注给出 n 与显著性阈值 **P ≤ 0.01）。
+Figure 6：敲除 Atf3 可在雌性 FS6KD 中延缓心衰进展
+(A) 雌鼠在早期与中期的超声心动图指标汇总（EF、LVDd），比较 Atf3−/−FS6WT、Atf3+/+FS6KD、Atf3−/−FS6KD（给出各组 n；统计为 two-way ANOVA + Tukey）。
+(B) 雄鼠对应比较（图注给出各组 n），用于评估性别差异。
+(C–D) Masson 染色用于纤维化评估，并给出纤维化面积定量汇总（给出 n 与检验方法）。
+(E) 中期心脏组织 RNA-seq 的 DEGs 与 GO 富集热图（n=4 生物学重复）。
+(F–G) Atf3 敲除背景下的 ISR 相关蛋白免疫印迹与定量（给出 n 与显著性阈值）。

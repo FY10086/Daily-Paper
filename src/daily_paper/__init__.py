@@ -1,0 +1,2 @@
+"""Daily Paper MVP package."""
+
