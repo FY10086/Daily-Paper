@@ -1,12 +1,13 @@
 # Daily Paper MVP
 
 每天自动筛选 1 篇生物信息/测序/数据库相关高质量论文，生成结构化解读并通过邮件发送。
-当前版本支持：严格期刊白名单过滤、仅选择可解析全文的研究文章、按 Figure 顺序增强解读（可提取时）、OpenRouter 模型解读。
+当前版本支持：白名单期刊过滤、可配置的全文要求、按 Figure 顺序增强解读（可提取时）、OpenRouter 模型解读，以及在常规排序失败时的随机保底推荐。
 
 ## 项目结构
 
 - `daily_run.py`：单次执行入口
 - `config.demo/default_config.json`：公开示例配置模板
+- `config/default_config.json`：本地实际配置（不建议直接提交个人信息）
 - `src/daily_paper/collectors`：数据源抓取（Europe PMC / Crossref）
 - `src/daily_paper/ranker`：评分与Top1选择
 - `src/daily_paper/dedup`：已发送 DOI 去重
@@ -55,8 +56,9 @@ python3 daily_run.py --dry-run
 
 - 命令 `python3 daily_run.py --dry-run` 成功返回 JSON
 - 返回字段包含 `status / paper / subject / recipients / digest_preview`
+- 若常规排序未命中但随机保底生效，返回字段会包含 `selection_mode=fallback_random`
 - 若来源可解析图注，返回字段会包含 `figure_count > 0`
-- 若当前窗口内没有“可解析全文且满足研究类型”的论文，会返回 `status=empty`
+- 若常规排序与随机保底都未命中，才会返回 `status=empty`
 - 正式运行成功后，`data/sent_papers.txt` 新增 1 条 DOI
 - 连续运行两次，不会重复写入同一 DOI
 
@@ -71,6 +73,7 @@ python3 daily_run.py --dry-run
 - 时间窗口：`time_window.primary_days / fallback_days`
 - 期刊白名单与权重：`journals.whitelist`
 - 白名单兜底策略：`journals.allow_non_whitelist_fallback`
+- 随机保底：`fallback_random.enabled / fallback_random.search_days / fallback_random.pool_size / fallback_random.journals`
 - 收件人：`delivery.recipients`
 - SMTP 参数：`smtp.host / smtp.port / smtp.username / smtp.password / smtp.sender`
 - LLM 参数：`llm.provider / llm.api_key / llm.model / llm.base_url`

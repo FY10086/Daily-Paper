@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -34,6 +35,7 @@ def run_pipeline(
     papers = [paper for paper in papers if paper.doi not in sent_dois]
     papers = _enrich_and_filter_papers(papers, config)
 
+    selection_mode = "ranked"
     selected = select_best_paper(papers, config, keywords, require_whitelist=True)
     if not selected and bool(time_cfg.get("allow_fallback", True)):
         fallback_start = datetime.now(timezone.utc) - timedelta(days=int(time_cfg["fallback_days"]))
@@ -43,6 +45,10 @@ def run_pipeline(
         selected = select_best_paper(fallback_papers, config, keywords, require_whitelist=True)
         if not selected and bool(config["journals"].get("allow_non_whitelist_fallback", True)):
             selected = select_best_paper(fallback_papers, config, keywords, require_whitelist=False)
+    if not selected:
+        selected = _select_random_fallback_paper(config, keywords, sent_dois, whitelist_journals)
+        if selected:
+            selection_mode = "fallback_random"
 
     if not selected:
         return {"status": "empty", "message": "no paper selected"}
@@ -70,6 +76,7 @@ def run_pipeline(
 
     return {
         "status": "sent" if not dry_run else "dry_run",
+        "selection_mode": selection_mode,
         "paper": _paper_to_summary(selected),
         "subject": subject,
         "recipients": recipients,
@@ -175,6 +182,50 @@ def _enrich_and_filter_papers(papers: list[Paper], config: dict[str, Any]) -> li
         enriched = _enrich_assets_safe(paper)
         if require_full_text and not enriched.fulltext_available:
             continue
+        if not _is_target_research(enriched, content_cfg):
+            continue
+        filtered.append(enriched)
+    return filtered
+
+
+def _select_random_fallback_paper(
+    config: dict[str, Any],
+    keywords: list[str],
+    sent_dois: set[str],
+    whitelist_journals: list[str],
+) -> Paper | None:
+    fallback_cfg = config.get("fallback_random", {})
+    if not bool(fallback_cfg.get("enabled", False)):
+        return None
+
+    search_days = int(fallback_cfg.get("search_days", config.get("time_window", {}).get("fallback_days", 365)))
+    pool_size = int(fallback_cfg.get("pool_size", 100))
+    journal_filters = _resolve_random_fallback_journals(fallback_cfg, whitelist_journals)
+    if pool_size <= 0 or search_days <= 0 or not journal_filters:
+        return None
+
+    start_date = datetime.now(timezone.utc) - timedelta(days=search_days)
+    papers = _collect_all(config, keywords, start_date, pool_size, journal_filters)
+    papers = [paper for paper in papers if paper.doi not in sent_dois]
+    filtered = _filter_random_fallback_papers(papers, config, pool_size)
+    if not filtered:
+        return None
+    return random.SystemRandom().choice(filtered)
+
+
+def _resolve_random_fallback_journals(fallback_cfg: dict[str, Any], whitelist_journals: list[str]) -> list[str]:
+    configured = [str(item).strip().lower() for item in fallback_cfg.get("journals", []) if str(item).strip()]
+    if configured:
+        return configured
+    return [journal.strip().lower() for journal in whitelist_journals if journal.strip()]
+
+
+def _filter_random_fallback_papers(papers: list[Paper], config: dict[str, Any], pool_size: int) -> list[Paper]:
+    content_cfg = config.get("content", {})
+    limited = papers[:pool_size]
+    filtered: list[Paper] = []
+    for paper in limited:
+        enriched = _enrich_assets_safe(paper)
         if not _is_target_research(enriched, content_cfg):
             continue
         filtered.append(enriched)
