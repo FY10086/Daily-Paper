@@ -57,6 +57,7 @@ python3 daily_run.py --dry-run
 - 命令 `python3 daily_run.py --dry-run` 成功返回 JSON
 - 返回字段包含 `status / paper / subject / recipients / digest_preview`
 - 若常规排序未命中但随机保底生效，返回字段会包含 `selection_mode=fallback_random`
+- 若严格筛选未命中且 `fallback_random.enabled=true`，程序会从本次已抓到但未进入严格过滤结果的候选里，随机选择 1 篇未发送且医学相关的论文
 - 若来源可解析图注，返回字段会包含 `figure_count > 0`
 - 若常规排序与随机保底都未命中，才会返回 `status=empty`
 - 正式运行成功后，`data/sent_papers.txt` 新增 1 条 DOI
@@ -73,7 +74,7 @@ python3 daily_run.py --dry-run
 - 时间窗口：`time_window.primary_days / fallback_days`
 - 期刊白名单与权重：`journals.whitelist`
 - 白名单兜底策略：`journals.allow_non_whitelist_fallback`
-- 随机保底：`fallback_random.enabled / fallback_random.search_days / fallback_random.pool_size / fallback_random.journals`
+- 随机保底：`fallback_random.enabled / fallback_random.pool_size / fallback_random.journals / fallback_random.medical_include_any`
 - 收件人：`delivery.recipients`
 - SMTP 参数：`smtp.host / smtp.port / smtp.username / smtp.password / smtp.sender`
 - LLM 参数：`llm.provider / llm.api_key / llm.model / llm.base_url`

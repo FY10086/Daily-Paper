@@ -31,22 +31,24 @@ def run_pipeline(
     sent_dois = sent_log.load()
 
     start_date = datetime.now(timezone.utc) - timedelta(days=int(time_cfg["primary_days"]))
-    papers = _collect_all(config, keywords, start_date, max_results, whitelist_journals)
-    papers = [paper for paper in papers if paper.doi not in sent_dois]
-    papers = _enrich_and_filter_papers(papers, config)
+    primary_candidates = _collect_all(config, keywords, start_date, max_results, whitelist_journals)
+    primary_candidates = [paper for paper in primary_candidates if paper.doi not in sent_dois]
+    papers = _enrich_and_filter_papers(primary_candidates, config)
 
-    selection_mode = "ranked"
+    selection_mode = "scored"
     selected = select_best_paper(papers, config, keywords, require_whitelist=True)
+    random_candidate_pool = list(primary_candidates)
     if not selected and bool(time_cfg.get("allow_fallback", True)):
         fallback_start = datetime.now(timezone.utc) - timedelta(days=int(time_cfg["fallback_days"]))
-        fallback_papers = _collect_all(config, keywords, fallback_start, max_results, whitelist_journals)
-        fallback_papers = [paper for paper in fallback_papers if paper.doi not in sent_dois]
-        fallback_papers = _enrich_and_filter_papers(fallback_papers, config)
+        fallback_candidates = _collect_all(config, keywords, fallback_start, max_results, whitelist_journals)
+        fallback_candidates = [paper for paper in fallback_candidates if paper.doi not in sent_dois]
+        random_candidate_pool = _merge_unique_papers(random_candidate_pool, fallback_candidates)
+        fallback_papers = _enrich_and_filter_papers(fallback_candidates, config)
         selected = select_best_paper(fallback_papers, config, keywords, require_whitelist=True)
         if not selected and bool(config["journals"].get("allow_non_whitelist_fallback", True)):
             selected = select_best_paper(fallback_papers, config, keywords, require_whitelist=False)
     if not selected:
-        selected = _select_random_fallback_paper(config, keywords, sent_dois, whitelist_journals)
+        selected = _select_random_medical_fallback(random_candidate_pool, config, sent_dois)
         if selected:
             selection_mode = "fallback_random"
 
@@ -145,6 +147,16 @@ def _collect_keywords(config: dict[str, Any]) -> list[str]:
     return list(config["topic_keywords"]["en"])
 
 
+def _merge_unique_papers(*paper_groups: list[Paper]) -> list[Paper]:
+    merged: dict[str, Paper] = {}
+    for papers in paper_groups:
+        for paper in papers:
+            doi = paper.doi.strip().lower()
+            if doi and doi not in merged:
+                merged[doi] = paper
+    return list(merged.values())
+
+
 def _paper_to_summary(paper: Paper) -> dict[str, Any]:
     return {
         "title": paper.title,
@@ -188,48 +200,94 @@ def _enrich_and_filter_papers(papers: list[Paper], config: dict[str, Any]) -> li
     return filtered
 
 
-def _select_random_fallback_paper(
+def _select_random_medical_fallback(
+    papers: list[Paper],
     config: dict[str, Any],
-    keywords: list[str],
     sent_dois: set[str],
-    whitelist_journals: list[str],
 ) -> Paper | None:
     fallback_cfg = config.get("fallback_random", {})
     if not bool(fallback_cfg.get("enabled", False)):
         return None
 
-    search_days = int(fallback_cfg.get("search_days", config.get("time_window", {}).get("fallback_days", 365)))
-    pool_size = int(fallback_cfg.get("pool_size", 100))
-    journal_filters = _resolve_random_fallback_journals(fallback_cfg, whitelist_journals)
-    if pool_size <= 0 or search_days <= 0 or not journal_filters:
-        return None
+    max_pool_size = max(int(fallback_cfg.get("pool_size", len(papers) or 1)), 1)
+    journal_filters = [str(v).strip().lower() for v in fallback_cfg.get("journals", []) if str(v).strip()]
+    medical_keywords = [
+        str(v).strip().lower()
+        for v in fallback_cfg.get("medical_include_any", _default_medical_keywords())
+        if str(v).strip()
+    ]
 
-    start_date = datetime.now(timezone.utc) - timedelta(days=search_days)
-    papers = _collect_all(config, keywords, start_date, pool_size, journal_filters)
-    papers = [paper for paper in papers if paper.doi not in sent_dois]
-    filtered = _filter_random_fallback_papers(papers, config, pool_size)
-    if not filtered:
-        return None
-    return random.SystemRandom().choice(filtered)
-
-
-def _resolve_random_fallback_journals(fallback_cfg: dict[str, Any], whitelist_journals: list[str]) -> list[str]:
-    configured = [str(item).strip().lower() for item in fallback_cfg.get("journals", []) if str(item).strip()]
-    if configured:
-        return configured
-    return [journal.strip().lower() for journal in whitelist_journals if journal.strip()]
-
-
-def _filter_random_fallback_papers(papers: list[Paper], config: dict[str, Any], pool_size: int) -> list[Paper]:
-    content_cfg = config.get("content", {})
-    limited = papers[:pool_size]
-    filtered: list[Paper] = []
-    for paper in limited:
-        enriched = _enrich_assets_safe(paper)
-        if not _is_target_research(enriched, content_cfg):
+    candidates: list[Paper] = []
+    seen: set[str] = set()
+    for paper in papers:
+        doi = paper.doi.strip().lower()
+        if not doi or doi in sent_dois or doi in seen:
             continue
-        filtered.append(enriched)
-    return filtered
+        seen.add(doi)
+        if journal_filters and _normalize_text(paper.journal) not in journal_filters:
+            continue
+        if not _is_medical_related(paper, medical_keywords):
+            continue
+        candidates.append(paper)
+
+    if not candidates:
+        return None
+
+    return random.choice(candidates[:max_pool_size])
+
+
+def _is_medical_related(paper: Paper, medical_keywords: list[str]) -> bool:
+    text_blob = _normalize_text(
+        " ".join(
+            [
+                paper.title,
+                paper.abstract,
+                paper.journal,
+                paper.first_author_affiliation,
+                paper.last_author_affiliation,
+                " ".join(paper.affiliations),
+            ]
+        )
+    )
+    return any(token in text_blob for token in medical_keywords)
+
+
+def _default_medical_keywords() -> list[str]:
+    return [
+        "medical",
+        "medicine",
+        "clinical",
+        "clinic",
+        "patient",
+        "patients",
+        "hospital",
+        "disease",
+        "disorder",
+        "syndrome",
+        "cancer",
+        "tumor",
+        "tumour",
+        "therapy",
+        "treatment",
+        "diagnosis",
+        "diagnostic",
+        "prognosis",
+        "survival",
+        "cohort",
+        "mutation",
+        "variant",
+        "genetic",
+        "genomic",
+        "neurolog",
+        "psychiatr",
+        "cardi",
+        "oncolog",
+        "immun",
+    ]
+
+
+def _normalize_text(value: str) -> str:
+    return " ".join(value.lower().split())
 
 
 def _is_target_research(paper: Paper, content_cfg: dict[str, Any]) -> bool:
